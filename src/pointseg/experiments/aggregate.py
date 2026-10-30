@@ -22,9 +22,26 @@ def _key(config: dict[str, Any]) -> str:
     return f"{loss}_gamma{gamma}_{strategy}_{points}pts"
 
 
-def collect(root: str | Path) -> dict[str, list[dict[str, Any]]]:
+def is_experiment_run(path: Path, root: Path) -> bool:
+    """True for runs stored under an ``exp_*`` experiment directory.
+
+    The run layout is ``outputs/<experiment>/<run_name>/metrics.json``, so
+    ad-hoc runs such as ``outputs/smoke`` or ``outputs/bench`` are ignored and
+    cannot contaminate the aggregated numbers.
+    """
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        relative = path
+    return any(part.startswith("exp_") for part in relative.parts[:-1])
+
+
+def collect(root: str | Path, include_all: bool = False) -> dict[str, list[dict[str, Any]]]:
+    root = Path(root)
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for path in sorted(Path(root).rglob("metrics.json")):
+    for path in sorted(root.rglob("metrics.json")):
+        if not include_all and not is_experiment_run(path, root):
+            continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
@@ -57,8 +74,8 @@ def _mean_std(values: list[float]) -> dict[str, float | None]:
     }
 
 
-def aggregate(root: str | Path) -> dict[str, Any]:
-    groups = collect(root)
+def aggregate(root: str | Path, include_all: bool = False) -> dict[str, Any]:
+    groups = collect(root, include_all=include_all)
     result: dict[str, Any] = {}
     for key, runs in groups.items():
         per_class = [r["per_class_iou"] for r in runs if r.get("per_class_iou")]
@@ -81,9 +98,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Aggregate metrics.json files over seeds")
     parser.add_argument("--root", default="outputs")
     parser.add_argument("--output", default=None)
+    parser.add_argument(
+        "--include-all",
+        action="store_true",
+        help="also aggregate ad-hoc runs outside outputs/exp_* (not recommended)",
+    )
     args = parser.parse_args(argv)
 
-    result = aggregate(args.root)
+    result = aggregate(args.root, include_all=args.include_all)
     if not result:
         print(f"no metrics.json files found under {args.root!r}")
         return 1

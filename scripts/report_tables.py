@@ -21,6 +21,57 @@ def _fmt(stat: dict) -> str:
     return f"{stat['mean']:.4f}"
 
 
+def _run_details(root: Path) -> list[str]:
+    """Wall-clock and budget details for every experiment run."""
+    rows = []
+    for path in sorted(root.rglob("metrics.json")):
+        if not {"exp_density", "exp_sampling"} & set(path.parts):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        config = data.get("config") or {}
+        points = (config.get("point_sampling") or {}).get("points_per_crop")
+        strategy = (config.get("point_sampling") or {}).get("strategy")
+        history = data.get("history") or []
+        seconds = sum(float(row.get("epoch_seconds") or 0.0) for row in history)
+        val_seconds = sum(
+            float(row.get("epoch_seconds") or 0.0) for row in history if row.get("val_miou")
+        )
+        rows.append(
+            {
+                "run": data.get("run_name", path.parent.name),
+                "strategy": strategy,
+                "points": points,
+                "epochs": len(history),
+                "best_epoch": data.get("best_epoch"),
+                "miou": data.get("best_miou"),
+                "minutes": seconds / 60.0,
+                "val_minutes": val_seconds / 60.0,
+                "points_seen": history[0].get("mean_points_per_crop") if history else None,
+            }
+        )
+    if not rows:
+        return []
+    rows.sort(key=lambda row: (str(row["strategy"]), int(row["points"] or 0)))
+    lines = [
+        "### Run details",
+        "",
+        "| Run | Strategy | Points | Mean points seen | Epochs | Best epoch | Best mIoU | "
+        "Wall clock (min) | Validation (min) |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {row['run']} | {row['strategy']} | {row['points']} | "
+            f"{row['points_seen']:.1f} | {row['epochs']} | {row['best_epoch']} | "
+            f"{row['miou']:.4f} | {row['minutes']:.1f} | {row['val_minutes']:.1f} |"
+        )
+    lines.append("")
+    return lines
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", default="outputs")
@@ -106,6 +157,7 @@ def main() -> int:
         lines.append("")
 
     output = Path(args.output)
+    lines += _run_details(Path(args.root))
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"wrote {output} ({len(lines)} lines)")

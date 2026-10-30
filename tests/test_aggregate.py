@@ -6,7 +6,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pointseg.experiments.aggregate import _key, _mean_std, aggregate, collect
+from pointseg.experiments.aggregate import (
+    _key,
+    _mean_std,
+    aggregate,
+    collect,
+    is_experiment_run,
+)
 
 
 def _write_run(
@@ -59,9 +65,13 @@ def test_mean_std_handles_single_and_empty():
 
 
 def test_aggregate_groups_seeds(tmp_path):
-    _write_run(tmp_path, "a_seed1", seed=1, points=100, strategy="random", miou=0.30)
-    _write_run(tmp_path, "a_seed2", seed=2, points=100, strategy="random", miou=0.40)
-    _write_run(tmp_path, "b_seed1", seed=1, points=10, strategy="random", miou=0.10)
+    _write_run(
+        tmp_path / "exp_density", "a_seed1", seed=1, points=100, strategy="random", miou=0.30
+    )
+    _write_run(
+        tmp_path / "exp_density", "a_seed2", seed=2, points=100, strategy="random", miou=0.40
+    )
+    _write_run(tmp_path / "exp_density", "b_seed1", seed=1, points=10, strategy="random", miou=0.10)
 
     groups = collect(tmp_path)
     assert set(groups) == {
@@ -84,3 +94,24 @@ def test_aggregate_ignores_unrelated_json(tmp_path):
     (tmp_path / "random.json").write_text('{"unrelated": true}', encoding="utf-8")
     (tmp_path / "broken.json").write_text("{not json", encoding="utf-8")
     assert aggregate(tmp_path) == {}
+
+
+def test_adhoc_runs_are_excluded_but_can_be_included(tmp_path):
+    _write_run(tmp_path / "exp_density", "real", seed=1, points=100, strategy="random", miou=0.30)
+    _write_run(tmp_path / "bench", "scratch", seed=1, points=100, strategy="random", miou=0.05)
+
+    default = aggregate(tmp_path)
+    assert list(default) == ["partial_focal_gamma2.0_random_100pts"]
+    assert default["partial_focal_gamma2.0_random_100pts"]["best_miou"]["mean"] == pytest.approx(
+        0.30
+    )
+
+    everything = aggregate(tmp_path, include_all=True)
+    assert everything["partial_focal_gamma2.0_random_100pts"]["best_miou"]["n"] == 2
+
+
+def test_is_experiment_run():
+    root = Path("outputs")
+    assert is_experiment_run(root / "exp_density" / "run" / "metrics.json", root)
+    assert not is_experiment_run(root / "bench" / "run" / "metrics.json", root)
+    assert not is_experiment_run(root / "metrics.json", root)
