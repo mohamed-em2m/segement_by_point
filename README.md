@@ -101,13 +101,39 @@ uv run pointseg-eval --config outputs/baseline_100pts/config.yaml \
 ## Experiments
 
 ```bash
+# everything (density sweep, class-balanced arm, aggregation, tables, figures)
+bash scripts/run_all_experiments.sh
+
+# or step by step
 uv run pointseg-exp-density  --config configs/exp_density/A3.yaml
 uv run pointseg-exp-sampling --config configs/exp_sampling/random.yaml
 uv run pointseg-aggregate    --root outputs
+uv run python scripts/report_tables.py  --root outputs
+uv run python scripts/report_figures.py --root outputs
 uv run pointseg-visualize    --run-dir outputs/exp_density/density_100pts_seed42 \
   --config outputs/exp_density/density_100pts_seed42/config.yaml \
   --checkpoint outputs/exp_density/density_100pts_seed42/best.pt
 ```
+
+The random arm of Experiment B is the 100-point run of Experiment A, so only the
+class-balanced arm is trained separately.
+
+## Report and notebook
+
+```bash
+# execute the walkthrough notebook in place
+uv pip install --group dev --group docs
+uv run python -m nbconvert --to notebook --execute --inplace \
+  --ExecutePreprocessor.kernel_name=python3 \
+  notebooks/point_supervised_segmentation.ipynb
+
+# render report/technical_report.md -> HTML + PDF
+uv run python scripts/build_report.py
+```
+
+`scripts/build_report.py` refuses to build while an `<!-- AUTO_... -->`
+placeholder is still present, so a half-written report cannot be exported.
+
 
 ## Tests and linting
 
