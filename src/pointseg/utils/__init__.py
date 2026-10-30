@@ -45,6 +45,9 @@ def get_logger(name: str = "pointseg", level: int = logging.INFO) -> logging.Log
         handler = logging.StreamHandler(sys.stdout)
         handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
         logger.addHandler(handler)
+    # Do not let the record bubble up to a root handler (e.g. Jupyter's), which
+    # would print every line twice.
+    logger.propagate = False
     logger.setLevel(level)
     return logger
 

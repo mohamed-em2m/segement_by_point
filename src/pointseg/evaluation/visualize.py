@@ -33,6 +33,29 @@ def colorize(mask: np.ndarray) -> np.ndarray:
     return out
 
 
+def points_overlay(
+    mask: np.ndarray,
+    base: np.ndarray | None = None,
+    radius: int = 3,
+) -> np.ndarray:
+    """Draw sparse points enlarged so they are visible in a figure.
+
+    The mask itself is never modified; this is display-only dilation.
+    """
+    import cv2
+
+    if base is None:
+        overlay = np.full((*mask.shape, 3), 235, dtype=np.uint8)
+    else:
+        overlay = base.astype(np.uint8).copy()
+    kernel = np.ones((2 * radius + 1, 2 * radius + 1), dtype=np.uint8)
+    for class_id, color in enumerate(CLASS_COLORS):
+        points = (mask == class_id).astype(np.uint8)
+        if points.any():
+            overlay[cv2.dilate(points, kernel).astype(bool)] = color
+    return overlay
+
+
 def _read_history(run_dir: Path) -> list[dict[str, str]]:
     path = run_dir / "history.csv"
     if not path.is_file():
@@ -154,10 +177,15 @@ def plot_predictions(
         )
         prediction = logits.argmax(0).numpy()
 
+        image_rgb = denormalize_image(image.numpy())
         panels = [
-            (denormalize_image(image.numpy()), "image", None),
+            (image_rgb, "image", None),
             (colorize(target), "full ground truth", None),
-            (colorize(sparse), f"{points} point labels", None),
+            (
+                points_overlay(sparse, base=(image_rgb * 0.55).astype(np.uint8)),
+                f"{points} point labels",
+                None,
+            ),
             (colorize(prediction), "prediction", None),
             (colorize(target), "prediction errors", prediction != target),
         ]
