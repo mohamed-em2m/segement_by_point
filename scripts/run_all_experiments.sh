@@ -34,6 +34,15 @@ uv run pointseg-exp-sampling \
   --epochs "${EPOCHS}" \
   --output-dir outputs/exp_sampling
 
+echo "== Experiment C (optional): focal gamma ablation at 100 points =="
+for gamma in 0 3; do
+  uv run pointseg-train \
+    --config "configs/exp_gamma/gamma${gamma}.yaml" \
+    --set "training.epochs=${EPOCHS}" \
+    --set "seed=${SEEDS%% *}" \
+    --set "output_dir=outputs/exp_gamma"
+done
+
 echo "== aggregating =="
 uv run pointseg-aggregate --root outputs
 

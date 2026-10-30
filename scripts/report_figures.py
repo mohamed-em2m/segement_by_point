@@ -43,7 +43,7 @@ def _density_entries(data: dict) -> list[tuple[int, dict]]:
     entries = [
         (_points(key), value)
         for key, value in data.items()
-        if key.startswith("partial_focal") and "_random_" in key
+        if key.startswith("partial_focal_gamma2.0_") and "_random_" in key
     ]
     return sorted(entries, key=lambda item: item[0])
 
@@ -119,7 +119,7 @@ def plot_sampling_comparison(data: dict, out: Path) -> Path | None:
     entries = {
         _strategy(key): value
         for key, value in data.items()
-        if key.startswith("partial_focal") and "_100pts" in key
+        if key.startswith("partial_focal_gamma2.0_") and "_100pts" in key
     }
     if len(entries) < 2:
         return None
@@ -156,7 +156,7 @@ def plot_sampling_per_class(data: dict, out: Path) -> Path | None:
     entries = {
         _strategy(key): value
         for key, value in data.items()
-        if key.startswith("partial_focal") and "_100pts" in key
+        if key.startswith("partial_focal_gamma2.0_") and "_100pts" in key
     }
     if len(entries) < 2:
         return None
@@ -181,6 +181,56 @@ def plot_sampling_per_class(data: dict, out: Path) -> Path | None:
     ax.set_title("Per-class IoU: random vs class-balanced sampling (100 points)")
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=160)
+    plt.close(fig)
+    return out
+
+
+def _gamma_entries(data: dict) -> list[tuple[float, dict]]:
+    entries = []
+    for key, value in data.items():
+        if not key.startswith("partial_focal_gamma") or "_random_100pts" not in key:
+            continue
+        gamma = float(key.split("_gamma", 1)[1].split("_", 1)[0])
+        entries.append((gamma, value))
+    return sorted(entries, key=lambda item: item[0])
+
+
+def plot_gamma_ablation(data: dict, out: Path) -> Path | None:
+    entries = _gamma_entries(data)
+    if len(entries) < 2:
+        return None
+    gammas = [g for g, _ in entries]
+    miou = [v["best_miou"]["mean"] for _, v in entries]
+    f1 = [v["mean_f1"]["mean"] for _, v in entries]
+
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.0))
+    axes[0].plot(gammas, miou, marker="o", color=DENSITY_COLOR, label="mIoU")
+    axes[0].plot(gammas, f1, marker="s", color=F1_COLOR, label="mean F1")
+    axes[0].set_xticks(gammas)
+    axes[0].set_xticklabels([f"{g:g}" + ("\n(CE)" if g == 0 else "") for g in gammas])
+    axes[0].set_xlabel("focal gamma")
+    axes[0].set_ylabel("validation score")
+    axes[0].set_title("Focal gamma at 100 random points")
+    axes[0].grid(alpha=0.3)
+    axes[0].legend()
+
+    x = np.arange(len(CLASS_NAMES))
+    width = 0.8 / len(entries)
+    for index, (gamma, value) in enumerate(entries):
+        values = np.array(value["per_class_iou_mean"], dtype=float)
+        axes[1].bar(
+            x + (index - (len(entries) - 1) / 2) * width, values, width, label=f"gamma={gamma:g}"
+        )
+    axes[1].set_xticks(x)
+    axes[1].set_xticklabels(CLASS_NAMES, rotation=20, ha="right")
+    axes[1].set_ylim(0, 1)
+    axes[1].set_ylabel("IoU")
+    axes[1].set_title("Per-class IoU by gamma")
+    axes[1].legend(fontsize=8)
+    axes[1].grid(axis="y", alpha=0.3)
     fig.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=160)
@@ -265,6 +315,7 @@ def main() -> int:
         plot_density_per_class(data, out / "density_per_class.png"),
         plot_sampling_comparison(data, out / "sampling_comparison.png"),
         plot_sampling_per_class(data, out / "sampling_per_class.png"),
+        plot_gamma_ablation(data, out / "gamma_ablation.png"),
         plot_point_sampling(args.dataset_root, out / "point_sampling.png"),
     ]
     written = [path for path in written if path is not None]

@@ -89,10 +89,11 @@ def main() -> int:
 
     lines: list[str] = []
 
+    # Experiment A is the gamma=2.0 random sweep; other gammas are Experiment C.
     density = {
         key: value
         for key, value in data.items()
-        if "_random_" in key and key.startswith("partial_focal")
+        if key.startswith("partial_focal_gamma2.0_") and "_random_" in key
     }
     if density:
         lines += [
@@ -117,7 +118,9 @@ def main() -> int:
     sampling = {
         key: value
         for key, value in data.items()
-        if ("_random_" in key or "_class_balanced_" in key) and "_100pts" in key
+        if key.startswith("partial_focal_gamma2.0_")
+        and ("_random_" in key or "_class_balanced_" in key)
+        and "_100pts" in key
     }
     if sampling:
         lines += [
@@ -134,11 +137,32 @@ def main() -> int:
             )
         lines.append("")
 
+    gamma_rows = {
+        float(key.split("_gamma", 1)[1].split("_", 1)[0]): value
+        for key, value in data.items()
+        if key.startswith("partial_focal_gamma") and "_random_100pts" in key
+    }
+    if len(gamma_rows) > 1:
+        lines += [
+            "### Experiment C: focal gamma (100 random points)",
+            "",
+            "| gamma | Runs | Best mIoU (mean +/- std) | Mean F1 | Pixel accuracy |",
+            "|---:|---:|---|---:|---:|",
+        ]
+        for gamma, value in sorted(gamma_rows.items()):
+            label = f"{gamma:g}" + (" (partial CE)" if gamma == 0 else "")
+            lines.append(
+                f"| {label} | {value['best_miou']['n']} | {_fmt(value['best_miou'])} "
+                f"| {_fmt(value['mean_f1'])} | {_fmt(value['pixel_accuracy'])} |"
+            )
+        lines.append("")
+
     # Per-class IoU for the most informative settings.
     per_class_keys = [
         key
         for key in data
-        if key.endswith("_10pts") or key.endswith("_100pts") or key.endswith("_1000pts")
+        if key.startswith("partial_focal_gamma2.0_")
+        and (key.endswith("_10pts") or key.endswith("_100pts") or key.endswith("_1000pts"))
     ]
     if per_class_keys:
         lines += [
