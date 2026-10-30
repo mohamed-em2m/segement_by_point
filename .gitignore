@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+.env
+
+# Data and model artefacts (never commit the dataset or checkpoints)
+data/
+outputs/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.zip
+
+# Notebooks
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/

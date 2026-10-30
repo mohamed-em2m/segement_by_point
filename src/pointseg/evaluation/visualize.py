@@ -1,0 +1,192 @@
+"""Figures for training curves, per-class metrics and qualitative predictions."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+from collections.abc import Sequence
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+
+from pointseg.config import load_config  # noqa: E402
+from pointseg.constants import CLASS_COLORS, CLASS_NAMES, IGNORE_INDEX  # noqa: E402
+from pointseg.datasets.loveda import LoveDAEvalDataset  # noqa: E402
+from pointseg.datasets.point_sampling import sample_random_points  # noqa: E402
+from pointseg.datasets.transforms import denormalize_image  # noqa: E402
+from pointseg.evaluation.validate import predict_logits  # noqa: E402
+from pointseg.models.unet import build_model  # noqa: E402
+
+
+def colorize(mask: np.ndarray) -> np.ndarray:
+    """Map class ids to RGB; ignore-index pixels become light grey."""
+    out = np.zeros((*mask.shape, 3), dtype=np.uint8)
+    for class_id, color in enumerate(CLASS_COLORS):
+        out[mask == class_id] = color
+    out[mask == IGNORE_INDEX] = (220, 220, 220)
+    return out
+
+
+def _read_history(run_dir: Path) -> dict[str, list[float]]:
+    path = run_dir / "history.csv"
+    if not path.is_file():
+        raise FileNotFoundError(f"history.csv not found in {run_dir}")
+    rows: dict[str, list[float]] = {}
+    with path.open(encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            for key, value in row.items():
+                if value == "":
+                    continue
+                rows.setdefault(key, []).append(float(value))
+    return rows
+
+
+def plot_history(run_dir: str | Path) -> Path:
+    run_dir = Path(run_dir)
+    rows = _read_history(run_dir)
+    figures = run_dir / "figures"
+    figures.mkdir(parents=True, exist_ok=True)
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+    epochs = rows.get("epoch", [])
+    if "train_loss" in rows:
+        axes[0].plot(epochs, rows["train_loss"], marker="o", color="#1f77b4")
+        axes[0].set_title("Training loss (partial focal)")
+        axes[0].set_xlabel("epoch")
+        axes[0].set_ylabel("loss")
+        axes[0].grid(alpha=0.3)
+    if "val_miou" in rows:
+        axes[1].plot(epochs, rows["val_miou"], marker="o", color="#2ca02c", label="mIoU")
+        if "val_mean_f1" in rows:
+            axes[1].plot(epochs, rows["val_mean_f1"], marker="s", color="#ff7f0e", label="mean F1")
+        axes[1].set_title("Validation (full masks)")
+        axes[1].set_xlabel("epoch")
+        axes[1].set_ylim(0, 1)
+        axes[1].legend()
+        axes[1].grid(alpha=0.3)
+    fig.tight_layout()
+    out = figures / "history.png"
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    return out
+
+
+def plot_per_class(run_dir: str | Path) -> Path:
+    run_dir = Path(run_dir)
+    metrics_path = run_dir / "metrics.json"
+    data = json.loads(metrics_path.read_text(encoding="utf-8"))
+    metrics = data.get("best_metrics") or data.get("final_metrics") or {}
+    iou = metrics.get("per_class_iou") or []
+    f1 = metrics.get("per_class_f1") or []
+    names = CLASS_NAMES[: len(iou)]
+
+    figures = run_dir / "figures"
+    figures.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(9, 4))
+    x = np.arange(len(names))
+    width = 0.38
+    ax.bar(x - width / 2, iou, width, label="IoU", color="#1f77b4")
+    ax.bar(x + width / 2, f1, width, label="F1", color="#ff7f0e")
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, rotation=20, ha="right")
+    ax.set_ylim(0, 1)
+    ax.set_title(f"Per-class metrics - {data.get('run_name', run_dir.name)}")
+    ax.legend()
+    ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+    out = figures / "per_class.png"
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    return out
+
+
+@torch.no_grad()
+def plot_predictions(
+    config,
+    checkpoint: str | Path,
+    run_dir: str | Path,
+    num_images: int = 3,
+    points: int = 100,
+) -> Path:
+    run_dir = Path(run_dir)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = build_model(config.model).to(device)
+    payload = torch.load(checkpoint, map_location=device, weights_only=False)
+    model.load_state_dict(payload.get("model", payload))
+    model.eval()
+
+    dataset = LoveDAEvalDataset(
+        root=config.dataset.root,
+        domains=config.dataset.domains,
+        max_images=max(num_images, 1),
+        subset_seed=config.dataset.subset_seed,
+    )
+    rng = np.random.default_rng(config.seed)
+    figures = run_dir / "figures"
+    figures.mkdir(parents=True, exist_ok=True)
+
+    fig, axes = plt.subplots(num_images, 5, figsize=(18, 3.6 * num_images), squeeze=False)
+    for row in range(num_images):
+        item = dataset[row]
+        image = item["image"]
+        target = item["mask"].numpy()
+        sparse = sample_random_points(target, points, seed=int(rng.integers(0, 2**31 - 1)))
+        logits = predict_logits(
+            model,
+            image,
+            tile_size=config.evaluation.tile_size,
+            overlap=config.evaluation.tile_overlap,
+            device=device,
+            amp=config.training.amp,
+            num_classes=config.model.num_classes,
+        )
+        prediction = logits.argmax(0).numpy()
+
+        panels = [
+            (denormalize_image(image.numpy()), "image", None),
+            (colorize(target), "full ground truth", None),
+            (colorize(sparse), f"{points} point labels", None),
+            (colorize(prediction), "prediction", None),
+            (colorize(target), "prediction errors", prediction != target),
+        ]
+        for col, (panel, title, error) in enumerate(panels):
+            axes[row, col].imshow(panel)
+            if error is not None:
+                axes[row, col].imshow(np.where(error, 255, 0), cmap="Reds", alpha=0.55)
+            axes[row, col].set_title(title, fontsize=10)
+            axes[row, col].axis("off")
+    fig.tight_layout()
+    out = figures / "predictions.png"
+    fig.savefig(out, dpi=140)
+    plt.close(fig)
+    return out
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Generate figures for a run")
+    parser.add_argument("--run-dir", required=True)
+    parser.add_argument("--config", default=None, help="needed for prediction figures")
+    parser.add_argument("--checkpoint", default=None)
+    parser.add_argument("--num-images", type=int, default=3)
+    args = parser.parse_args(argv)
+
+    run_dir = Path(args.run_dir)
+    outputs = [plot_history(run_dir), plot_per_class(run_dir)]
+    if args.config and args.checkpoint:
+        config = load_config(args.config)
+        outputs.append(
+            plot_predictions(config, args.checkpoint, run_dir, num_images=args.num_images)
+        )
+    for path in outputs:
+        print(path)
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

@@ -1,0 +1,53 @@
+seed: 42
+output_dir: ./outputs/smoke
+run_name: smoke
+
+dataset:
+  name: loveda
+  root: ./data/LoveDA
+  crop_size: 128
+  domains: [Rural, Urban]
+  max_train_images: 8
+  max_val_images: 4
+  subset_seed: 42
+  augment: true
+  rotations: true
+
+model:
+  architecture: unet
+  encoder: resnet34
+  pretrained: false
+  num_classes: 7
+  in_channels: 3
+
+loss:
+  name: partial_focal
+  gamma: 2.0
+  alpha: null
+  strict: false
+
+training:
+  epochs: 1
+  batch_size: 2
+  num_workers: 0
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer: adamw
+  scheduler: cosine
+  amp: true
+  grad_clip: null
+  log_interval: 1
+  max_train_batches: 4
+
+point_sampling:
+  strategy: random
+  points_per_crop: 20
+  ignore_index: 255
+  fixed_points: true
+
+evaluation:
+  metrics: [miou, f1, pixel_accuracy]
+  tile_size: 128
+  tile_overlap: 0.0
+  batch_size: 1
+  every_n_epochs: 1
