@@ -188,9 +188,68 @@ def plot_sampling_per_class(data: dict, out: Path) -> Path | None:
     return out
 
 
+def plot_point_sampling(
+    dataset_root: str,
+    out: Path,
+    points: int = 100,
+    seed: int = 42,
+) -> Path | None:
+    """Illustrate random vs class-balanced point labels on a real crop."""
+    import cv2
+
+    from pointseg.constants import IGNORE_INDEX
+    from pointseg.datasets.loveda import discover_pairs
+    from pointseg.datasets.point_sampling import (
+        sample_class_balanced_points,
+        sample_random_points,
+    )
+    from pointseg.datasets.transforms import remap_mask
+    from pointseg.evaluation.visualize import colorize, points_overlay
+
+    try:
+        pairs = discover_pairs(dataset_root, "Train")
+    except (FileNotFoundError, ValueError):
+        return None
+
+    best: tuple[int, np.ndarray, np.ndarray, str] | None = None
+    for pair in pairs[:25]:
+        image = cv2.cvtColor(cv2.imread(str(pair["image"]), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+        mask = remap_mask(cv2.imread(str(pair["mask"]), cv2.IMREAD_UNCHANGED))
+        crop = mask[256:768, 256:768]
+        n_classes = len(np.unique(crop[crop != IGNORE_INDEX]))
+        if best is None or n_classes > best[0]:
+            best = (n_classes, image[256:768, 256:768], crop, str(pair["id"]))
+    if best is None:
+        return None
+    n_classes, image_crop, mask_crop, sample_id = best
+
+    random_points = sample_random_points(mask_crop, points, seed=seed)
+    balanced_points = sample_class_balanced_points(mask_crop, points, seed=seed)
+    dimmed = (image_crop.astype(np.float32) * 0.55).astype(np.uint8)
+
+    fig, axes = plt.subplots(1, 4, figsize=(16, 4.2))
+    axes[0].imshow(image_crop)
+    axes[0].set_title("image crop")
+    axes[1].imshow(colorize(mask_crop))
+    axes[1].set_title(f"full mask ({n_classes} classes)")
+    axes[2].imshow(points_overlay(random_points, base=dimmed))
+    axes[2].set_title(f"{points} random points")
+    axes[3].imshow(points_overlay(balanced_points, base=dimmed))
+    axes[3].set_title(f"{points} class-balanced points")
+    for ax in axes:
+        ax.axis("off")
+    fig.suptitle(f"Point annotation simulation ({sample_id})", fontsize=11)
+    fig.tight_layout()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default="outputs")
+    parser.add_argument("--dataset-root", default="data/LoveDA")
     parser.add_argument("--output", default="report/figures")
     args = parser.parse_args()
 
@@ -206,6 +265,7 @@ def main() -> int:
         plot_density_per_class(data, out / "density_per_class.png"),
         plot_sampling_comparison(data, out / "sampling_comparison.png"),
         plot_sampling_per_class(data, out / "sampling_per_class.png"),
+        plot_point_sampling(args.dataset_root, out / "point_sampling.png"),
     ]
     written = [path for path in written if path is not None]
     if not written:

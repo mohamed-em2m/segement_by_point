@@ -73,6 +73,18 @@ a single T4; the subset is selected by `dataset.max_train_images`,
 `dataset.max_val_images` and `dataset.subset_seed`. Set both limits to `null`
 to train on the full official split.
 
+The exact files used for the reported runs are listed in
+[`configs/loveda_subset_manifest.json`](configs/loveda_subset_manifest.json).
+`scripts/download_loveda_subset.py` recreates that subset from the
+official-structure Hugging Face mirror (`ahsennazir/loveDA`, which mirrors the
+Zenodo release) and writes the same manifest:
+
+```bash
+python scripts/download_loveda_subset.py --root data/LoveDA \
+  --train-rural 300 --train-urban 300 --val-rural 100 --val-urban 100
+```
+
+
 ## Train
 
 ```bash

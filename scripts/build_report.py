@@ -98,6 +98,8 @@ def pandoc(markdown: Path, output: Path) -> None:
             "--to",
             "html5",
             "--standalone",
+            "--metadata",
+            f"title={markdown.stem.replace('_', ' ').title()}",
             "--resource-path",
             str(markdown.parent),
             "--output",

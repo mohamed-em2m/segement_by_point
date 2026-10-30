@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Point-Supervised Semantic Segmentation on LoveDA</title>
+<style>
+@page {
+  size: A4;
+  margin: 18mm 16mm 20mm 16mm;
+  @bottom-center {
+    content: counter(page) " / " counter(pages);
+    font-size: 9pt;
+    color: #666;
+  }
+}
+body {
+  font-family: "DejaVu Serif", Georgia, serif;
+  font-size: 10.5pt;
+  line-height: 1.45;
+  color: #1a1a1a;
+}
+h1, h2, h3, h4 {
+  font-family: "DejaVu Sans", Helvetica, Arial, sans-serif;
+  color: #10314f;
+  line-height: 1.2;
+}
+h1 { font-size: 20pt; margin: 0 0 4pt 0; }
+h2 { font-size: 14pt; margin-top: 18pt; border-bottom: 1px solid #d5dde5; padding-bottom: 2pt; }
+h3 { font-size: 11.5pt; margin-top: 14pt; }
+p { text-align: justify; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 10pt 0;
+  font-size: 9pt;
+  font-family: "DejaVu Sans", Helvetica, sans-serif;
+}
+th, td { border: 1px solid #c9d3dd; padding: 4pt 6pt; text-align: left; }
+th { background: #eef2f6; }
+tr:nth-child(even) td { background: #fafbfc; }
+code, pre {
+  font-family: "DejaVu Sans Mono", monospace;
+  font-size: 8.8pt;
+  background: #f4f6f8;
+}
+pre { padding: 8pt; border-left: 3px solid #9fb3c8; overflow-x: auto; }
+img { max-width: 100%; display: block; margin: 10pt auto; }
+figure { margin: 12pt 0; text-align: center; }
+figcaption { font-size: 9pt; color: #555; }
+blockquote { border-left: 3px solid #9fb3c8; margin-left: 0; padding-left: 10pt; color: #333; }
+</style>
+</head>
+<body>
+
+<header id="title-block-header">
+<h1 class="title">Technical Report</h1>
+</header>
+<h1
+id="point-supervised-semantic-segmentation-on-loveda">Point-Supervised
+Semantic Segmentation on LoveDA</h1>
+<p><strong>Technical report</strong></p>
+<h2 id="1-introduction-and-problem">1. Introduction and problem</h2>
+<p>Semantic segmentation normally relies on a dense label for every
+pixel. Dense annotation of high-resolution remote-sensing imagery is
+slow and expensive: a single 1024x1024 LoveDA tile contains over one
+million pixels, and class boundaries (roads, buildings, field edges) are
+exactly where annotator effort is concentrated. Point supervision asks a
+cheaper question: what can a segmentation network learn if only
+<em>N</em> pixels per training crop are labelled?</p>
+<p>The setting is harder than it first appears. The loss is computed on
+a tiny, non-uniform sample of the image; most pixels carry no gradient.
+The sampled pixels are spatially correlated, so a random point set can
+miss rare classes almost entirely. The annotation budget also has to be
+honest: if points are redrawn every epoch, the network eventually sees
+far more than <em>N</em> labels per image even though the nominal budget
+never changes. Finally, evaluation must still use complete masks,
+otherwise a model can look good simply because it was judged on the same
+sparse pixels it was trained on.</p>
+<p>This report implements the assignment's partial focal loss,</p>
+<pre><code>L_pFCE = sum_i [ FocalLoss(pred_i, GT_i) * MASK_labeled,i ] / sum_i MASK_labeled,i</code></pre>
+<p>on LoveDA with a U-Net/ResNet-34 segmentation network, and studies
+two factors: the number of points per crop (Experiment A) and the
+point-sampling strategy (Experiment B). All numbers in this report come
+from the runs in <code>outputs/</code>; none are hardcoded.</p>
+<h2 id="2-method">2. Method</h2>
+<h3 id="21-dataset-and-label-mapping">2.1 Dataset and label mapping</h3>
+<p>LoveDA contains 1024x1024 RGB tiles with single-channel masks and an
+official train/val split (Rural and Urban domains). The original ids are
+remapped to a contiguous seven-class problem:</p>
+<table>
+<thead>
+<tr class="header">
+<th style="text-align: right;">Original id</th>
+<th>Class</th>
+<th style="text-align: right;">Training id</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;">0</td>
+<td>no-data</td>
+<td style="text-align: right;">255 (<code>IGNORE_INDEX</code>)</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">1</td>
+<td>background</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">2</td>
+<td>building</td>
+<td style="text-align: right;">1</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">3</td>
+<td>road</td>
+<td style="text-align: right;">2</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">4</td>
+<td>water</td>
+<td style="text-align: right;">3</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">5</td>
+<td>barren</td>
+<td style="text-align: right;">4</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">6</td>
+<td>forest</td>
+<td style="text-align: right;">5</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">7</td>
+<td>agriculture</td>
+<td style="text-align: right;">6</td>
+</tr>
+</tbody>
+</table>
+<p>No-data pixels are never sampled and never supervised. The full
+training mask is used only inside the dataset's <code>__getitem__</code>
+to draw points; the item that leaves the method contains the image and a
+sparse mask in which every non-sampled pixel is 255. Validation uses the
+complete ground-truth mask.</p>
+<p><strong>Subset used here.</strong> The experiments use a
+deterministic, class/domain-balanced subset of the official split: 600
+training images (300 Rural, 300 Urban) and 200 validation images (100
+Rural, 100 Urban), selected with <code>dataset.subset_seed=42</code>.
+The subset was chosen because the available hardware was a single Tesla
+T4; the configuration supports the full split by setting
+<code>max_train_images</code> and <code>max_val_images</code> to
+<code>null</code>. The exact file list is recorded in
+<code>data/LoveDA/subset_manifest.json</code>.</p>
+<h3 id="22-architecture">2.2 Architecture</h3>
+<p>The network is
+<code>smp.Unet(encoder_name="resnet34", encoder_weights="imagenet", in_channels=3, classes=7, activation=None)</code>:
+a U-Net decoder with a ResNet-34 encoder pretrained on ImageNet,
+returning raw logits. It has 24.44M parameters. No YOLO,
+instance-segmentation, or post-processing components are used.</p>
+<h3 id="23-point-annotation-simulation">2.3 Point annotation
+simulation</h3>
+<p>For every training crop the pipeline selects exactly <em>N</em> valid
+pixels and copies their original class ids into a sparse mask; all other
+pixels become 255.</p>
+<ul>
+<li><strong>Random sampling</strong> draws <em>N</em> pixels uniformly
+from the valid pixels of the crop. Its class distribution follows the
+natural class frequency.</li>
+<li><strong>Class-balanced sampling</strong> round-robins over the
+classes present in the crop, so a rare class receives the same number of
+points as a common one. If a class runs out of pixels, the remaining
+budget is redistributed to classes that still have pixels.</li>
+</ul>
+<p>If a crop contains fewer than <em>N</em> valid pixels, all valid
+pixels are used and a warning is logged. Sampling is seeded and
+reproducible.</p>
+<p><strong>Fixed point sets.</strong> By default the crop window and the
+point set for a given image are deterministic, seeded by
+<code>(seed, image_index)</code>. The same <em>N</em> pixels are
+therefore used in every epoch, which makes the annotation budget honest.
+Geometric augmentation (horizontal/vertical flips and optional 90-degree
+rotations) is still random, but it is applied to the image and the
+sparse mask with identical parameters, so labels stay aligned. Setting
+<code>point_sampling.fixed_points=false</code> redraws both crop and
+points each epoch; the network then sees more distinct labels over
+training, and that setting is reported separately rather than mixed into
+the main results.</p>
+<h3 id="24-loss">2.4 Loss</h3>
+<p>The per-pixel focal loss is</p>
+<pre><code>FL = -alpha_t * (1 - p_t)^gamma * log(p_t)</code></pre>
+<p>where <code>p_t</code> is the softmax probability of the ground-truth
+class. The partial focal loss multiplies <code>FL</code> by the labelled
+mask and divides by the number of labelled pixels, so unlabelled pixels
+contribute neither to the numerator nor to the denominator.
+<code>gamma=0</code> and <code>alpha=None</code> reduces exactly to
+partial cross-entropy, which is implemented separately as
+<code>PartialCrossEntropyLoss</code> and tested for numerical
+equivalence.</p>
+<p>Implementation details that matter for stability:</p>
+<ul>
+<li><code>log_softmax</code> and the focal term are computed in float32
+even under AMP;</li>
+<li>ignored targets are clamped to a safe index before
+<code>gather</code>, then masked out;</li>
+<li>gradients at ignored pixels are exactly zero (unit-tested);</li>
+<li>a batch with no labelled pixels returns a differentiable zero by
+default, or raises when <code>loss.strict=true</code>;</li>
+<li>class weights (<code>alpha</code>) are optional and, if used, must
+be estimated from the sparse labels only.</li>
+</ul>
+<h3 id="25-training-and-evaluation">2.5 Training and evaluation</h3>
+<table>
+<thead>
+<tr class="header">
+<th>Setting</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Optimizer</td>
+<td>AdamW, lr 1e-3, weight decay 1e-4</td>
+</tr>
+<tr class="even">
+<td>Schedule</td>
+<td>cosine annealing to 1% of the initial lr</td>
+</tr>
+<tr class="odd">
+<td>Batch size</td>
+<td>4</td>
+</tr>
+<tr class="even">
+<td>Crop size</td>
+<td>512x512 random crop</td>
+</tr>
+<tr class="odd">
+<td>Epochs</td>
+<td>10 (experiments)</td>
+</tr>
+<tr class="even">
+<td>Precision</td>
+<td>AMP (fp16) on CUDA</td>
+</tr>
+<tr class="odd">
+<td>Augmentation</td>
+<td>horizontal/vertical flips, 90-degree rotations</td>
+</tr>
+<tr class="even">
+<td>Normalization</td>
+<td>ImageNet mean/std</td>
+</tr>
+<tr class="odd">
+<td>Validation</td>
+<td>deterministic tiled inference, 512x512 tiles, 25% overlap, logit
+averaging</td>
+</tr>
+<tr class="even">
+<td>Metrics</td>
+<td>split-level confusion matrix: per-class IoU, mIoU, per-class F1,
+mean F1, pixel accuracy</td>
+</tr>
+</tbody>
+</table>
+<p>Validation accumulates one confusion matrix over the whole split (not
+a per-image average). Pixels with ground truth 255 are excluded. A class
+with zero ground-truth pixels in the split is reported as NaN and
+excluded from mIoU and mean F1. Checkpoints are selected by validation
+mIoU; <code>best.pt</code> and <code>last.pt</code> contain weights,
+optimizer, scheduler, scaler, epoch, resolved config and seed.</p>
+<p>Because a 1024x1024 tile does not fit the 512x512 training crop,
+validation uses sliding-window inference: with 25% overlap the window
+starts are <code>[0, 384, 512]</code> on each axis, i.e. nine 512x512
+windows per image, and the logits are averaged in the overlap regions
+before the argmax. This is deterministic and identical for every run, so
+the comparisons are not affected by evaluation noise.</p>
+<p><strong>What the network actually sees.</strong> For each training
+image the model receives a 512x512 crop with 10-1000 labelled pixels
+(0.004%-0.4% of the crop) and 255 everywhere else. All reported runs use
+<code>fixed_points=true</code>, so the crop window and the point set are
+identical in every epoch; only the flips/rotations change.</p>
+<h2 id="3-experiments">3. Experiments</h2>
+<p>Both experiments share the split, architecture, preprocessing,
+optimizer, schedule, epoch budget and seed (42). The only changed factor
+is stated in each subsection. Runs are stored under
+<code>outputs/exp_density/</code> and
+<code>outputs/exp_sampling/</code>; <code>pointseg-aggregate</code>
+computes mean and standard deviation over seeds from the saved
+<code>metrics.json</code> files.</p>
+<!-- AUTO_RESULTS -->
+
+<h2 id="4-discussion">4. Discussion</h2>
+<!-- AUTO_DISCUSSION -->
+
+<h2 id="5-limitations-and-future-work">5. Limitations and future
+work</h2>
+<ul>
+<li><strong>Single seed and a subset.</strong> The reported runs use one
+seed and 600/200 images on one T4. The runners accept
+<code>--seeds</code> and the config accepts the full split, but
+multi-seed error bars on the full dataset were outside the available
+compute. Differences of a few mIoU points should therefore be read as
+trends, not as tightly estimated effects.</li>
+<li><strong>No semi-supervised use of unlabelled pixels.</strong> The
+assignment's larger system includes semi-supervised learning on the
+unlabelled pixels; this work deliberately isolates the effect of the
+partial loss and point budget. Pseudo- labelling, consistency
+regularization, or entropy minimization on the 255 pixels are the
+natural next step.</li>
+<li><strong>No test-time augmentation or ensembling.</strong> TTA and
+model ensembles usually add a few mIoU points but would obscure the
+comparison of annotation budgets.</li>
+<li><strong>No histogram matching.</strong> Domain adaptation between
+Rural and Urban is left out; histogram matching could reduce the domain
+gap but is a separate factor.</li>
+<li><strong>Fixed crops.</strong> The default fixed point set also fixes
+the crop window, so each image contributes one 512x512 region. This is
+the honest-budget choice; resampling crops and points each epoch is
+supported and would likely improve raw accuracy at the cost of a larger
+effective annotation budget.</li>
+</ul>
+<h2 id="6-conclusion">6. Conclusion</h2>
+<!-- AUTO_CONCLUSION -->
+
+<h2 id="appendix-reproducibility">Appendix: reproducibility</h2>
+<ul>
+<li>Hardware: one Tesla T4 (15 GB, driver 580.82.07); PyTorch
+2.15.0+cu132 (CUDA 13.2, cuDNN 9.26), torchvision 0.29.2,
+segmentation-models-pytorch 0.6.0, Python 3.13.</li>
+<li>Seed 42 for Python, NumPy and torch; DataLoader workers are
+seeded.</li>
+<li>Every run writes <code>config.yaml</code>,
+<code>metadata.json</code> (library versions and git commit),
+<code>history.csv</code>, <code>metrics.json</code>,
+<code>best.pt</code> and <code>last.pt</code>.</li>
+<li>Dataset files, checkpoints and outputs are git-ignored; the subset
+manifest is kept with the data.</li>
+<li>Commands:</li>
+</ul>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> sync <span class="at">--group</span> dev</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run pytest</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run pointseg-check-data <span class="at">--config</span> configs/default.yaml</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run pointseg-exp-density  <span class="at">--config</span> configs/exp_density/A3.yaml</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run pointseg-exp-sampling <span class="at">--config</span> configs/exp_sampling/random.yaml</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run pointseg-aggregate    <span class="at">--root</span> outputs</span></code></pre></div>
+
+</body>
+</html>

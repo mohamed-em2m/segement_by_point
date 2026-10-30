@@ -141,6 +141,18 @@ ground-truth pixels in the split is reported as NaN and excluded from mIoU and
 mean F1. Checkpoints are selected by validation mIoU; `best.pt` and `last.pt`
 contain weights, optimizer, scheduler, scaler, epoch, resolved config and seed.
 
+Because a 1024x1024 tile does not fit the 512x512 training crop, validation uses
+sliding-window inference: with 25% overlap the window starts are `[0, 384, 512]`
+on each axis, i.e. nine 512x512 windows per image, and the logits are averaged in
+the overlap regions before the argmax. This is deterministic and identical for
+every run, so the comparisons are not affected by evaluation noise.
+
+**What the network actually sees.** For each training image the model receives a
+512x512 crop with 10-1000 labelled pixels (0.004%-0.4% of the crop) and 255
+everywhere else. All reported runs use `fixed_points=true`, so the crop window
+and the point set are identical in every epoch; only the flips/rotations change.
+
+
 ## 3. Experiments
 
 Both experiments share the split, architecture, preprocessing, optimizer,
