@@ -179,5 +179,9 @@ def evaluate_main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
+# Alias used by the ``pointseg-eval`` console script.
+main = evaluate_main
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(evaluate_main())

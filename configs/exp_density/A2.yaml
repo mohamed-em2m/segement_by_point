@@ -10,7 +10,7 @@ model: {architecture: unet, encoder: resnet34, pretrained: true, num_classes: 7,
 loss: {name: partial_focal, gamma: 2.0, alpha: null, strict: false}
 training: {epochs: 10, batch_size: 4, num_workers: 4, learning_rate: 0.001,
            weight_decay: 0.0001, optimizer: adamw, scheduler: cosine, amp: true,
-           grad_clip: null, log_interval: 20, max_train_batches: null}
+           grad_clip: null, log_interval: 50, max_train_batches: null}
 point_sampling: {strategy: random, points_per_crop: 50, ignore_index: 255, fixed_points: true}
 evaluation: {metrics: [miou, f1, pixel_accuracy], tile_size: 512, tile_overlap: 0.25,
-             batch_size: 2, every_n_epochs: 1}
+             batch_size: 2, every_n_epochs: 2}

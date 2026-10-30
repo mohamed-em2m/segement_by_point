@@ -33,18 +33,23 @@ def colorize(mask: np.ndarray) -> np.ndarray:
     return out
 
 
-def _read_history(run_dir: Path) -> dict[str, list[float]]:
+def _read_history(run_dir: Path) -> list[dict[str, str]]:
     path = run_dir / "history.csv"
     if not path.is_file():
         raise FileNotFoundError(f"history.csv not found in {run_dir}")
-    rows: dict[str, list[float]] = {}
     with path.open(encoding="utf-8") as fh:
-        for row in csv.DictReader(fh):
-            for key, value in row.items():
-                if value == "":
-                    continue
-                rows.setdefault(key, []).append(float(value))
-    return rows
+        return list(csv.DictReader(fh))
+
+
+def _series(rows: list[dict[str, str]], key: str) -> tuple[list[int], list[float]]:
+    xs: list[int] = []
+    ys: list[float] = []
+    for row in rows:
+        value = row.get(key, "")
+        if value not in (None, ""):
+            xs.append(int(row["epoch"]))
+            ys.append(float(value))
+    return xs, ys
 
 
 def plot_history(run_dir: str | Path) -> Path:
@@ -54,17 +59,18 @@ def plot_history(run_dir: str | Path) -> Path:
     figures.mkdir(parents=True, exist_ok=True)
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 4))
-    epochs = rows.get("epoch", [])
-    if "train_loss" in rows:
-        axes[0].plot(epochs, rows["train_loss"], marker="o", color="#1f77b4")
+    loss_x, loss_y = _series(rows, "train_loss")
+    if loss_x:
+        axes[0].plot(loss_x, loss_y, marker="o", color="#1f77b4")
         axes[0].set_title("Training loss (partial focal)")
         axes[0].set_xlabel("epoch")
         axes[0].set_ylabel("loss")
         axes[0].grid(alpha=0.3)
-    if "val_miou" in rows:
-        axes[1].plot(epochs, rows["val_miou"], marker="o", color="#2ca02c", label="mIoU")
-        if "val_mean_f1" in rows:
-            axes[1].plot(epochs, rows["val_mean_f1"], marker="s", color="#ff7f0e", label="mean F1")
+    miou_x, miou_y = _series(rows, "val_miou")
+    if miou_x:
+        axes[1].plot(miou_x, miou_y, marker="o", color="#2ca02c", label="mIoU")
+        f1_x, f1_y = _series(rows, "val_mean_f1")
+        axes[1].plot(f1_x, f1_y, marker="s", color="#ff7f0e", label="mean F1")
         axes[1].set_title("Validation (full masks)")
         axes[1].set_xlabel("epoch")
         axes[1].set_ylim(0, 1)
