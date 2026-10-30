@@ -35,7 +35,11 @@ uv run pointseg-exp-sampling \
   --output-dir outputs/exp_sampling
 
 echo "== Experiment C (optional): focal gamma ablation at 100 points =="
-for gamma in 0 3; do
+for gamma in 0 1 2 3; do
+  if [ "${gamma}" = "2" ]; then
+    # gamma=2 is exactly the main 100-point density run (A3): skip the retrain.
+    continue
+  fi
   uv run pointseg-train \
     --config "configs/exp_gamma/gamma${gamma}.yaml" \
     --set "training.epochs=${EPOCHS}" \
